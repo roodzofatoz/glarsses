@@ -141,6 +141,7 @@ export interface IndepConfig {
   look_ahead_ms: number;
   debug_outline: boolean;
   roll_trim_deg: number;
+  gentle_centering: boolean;
 }
 
 export interface IndepStatus {

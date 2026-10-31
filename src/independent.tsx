@@ -132,6 +132,14 @@ export function IndependentSections() {
             />
           </PanelSectionRow>
           <PanelSectionRow>
+            <ToggleField
+              label="Gentle centering"
+              description="When you hold your head still, the screen slowly settles back in front of you. Also cancels slow drift."
+              checked={cfg.gentle_centering}
+              onChange={(v) => update({ gentle_centering: v }, true)}
+            />
+          </PanelSectionRow>
+          <PanelSectionRow>
             <ToggleField label="Follow left/right" checked={cfg.follow_yaw} onChange={(v) => update({ follow_yaw: v }, true)} />
           </PanelSectionRow>
           <PanelSectionRow>

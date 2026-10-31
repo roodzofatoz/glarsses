@@ -40,6 +40,7 @@ DEFAULTS = {
     "output_aspect": 16 / 9,
     "debug_outline": False,
     "roll_trim_deg": 0.0,        # + rotates the screen clockwise
+    "gentle_centering": True,    # follow mode: ease the screen back to center when the head is still
 }
 
 # XREAL Air 2 Pro sensor -> head frame (learned with head_test.py)
@@ -93,15 +94,26 @@ def angle_between(a, b):
 class BiasTracker:
     """Keeps the gyro bias (offset) accurate so the screen doesn't drift sideways.
 
-    * Normal use: every 0.5 s window where the head is nearly still nudges the bias toward the
-      measured mean (tolerates the small micro-movements of a head wearing the glasses).
-    * After a recenter: the next ~1 s (user holding still) sets the bias directly.
+    The bias changes as the glasses warm up, and only the gyro can tell yaw (gravity can't),
+    so an outdated bias shows up as the screen slowly sliding left or right.
+
+    * Background: a worn head is never perfectly still, but while you watch the screen your
+      real rotation averages out to zero. Every 0.5 s window without big movements nudges the
+      bias toward the window's mean with a ~TAU second time constant.
+    * Recenter: skip the moment of the button press, then take the stillest 0.5 s window of
+      the next 3 s as the new bias.
     """
-    WINDOW = 500
+    WINDOW = 500          # samples (0.5 s at 1 kHz)
+    TAU = 30.0            # seconds of accepted data for the background estimate to settle
+    MAX_SD = 1.2          # deg/s: windows noisier than this contain real head movement
+    MAX_DIFF = 1.5        # deg/s: ignore windows far from the current estimate (turning)
+    VERY_STILL = 0.25     # deg/s: below this the window is pure sensor noise -> strong update
 
     def __init__(self, fusion_obj):
         self.f = fusion_obj
-        self.capture_windows = 0
+        self.capture_skip = 0
+        self.capture_left = 0
+        self.capture_best = None
         self.reset()
 
     def reset(self):
@@ -111,7 +123,9 @@ class BiasTracker:
 
     def request_capture(self):
         self.reset()
-        self.capture_windows = 2
+        self.capture_skip = 1
+        self.capture_left = 6
+        self.capture_best = None
 
     def add(self, gyro):
         for i in range(3):
@@ -123,15 +137,29 @@ class BiasTracker:
             return
         n = self.n
         mean = [self.sum[i] / n for i in range(3)]
-        sd = [math.sqrt(max(0.0, self.sq[i] / n - mean[i] ** 2)) for i in range(3)]
-        diff = [mean[i] - self.f.bias[i] for i in range(3)]
-        if self.capture_windows > 0:
-            self.capture_windows -= 1
-            if all(sd[i] < 1.0 and abs(diff[i]) < 4.0 for i in range(3)):
-                self.f.bias = tuple(mean)
-        elif all(sd[i] < 0.5 and abs(diff[i]) < 1.0 for i in range(3)):
-            self.f.bias = tuple(self.f.bias[i] + 0.25 * diff[i] for i in range(3))
+        sd = max(math.sqrt(max(0.0, self.sq[i] / n - mean[i] ** 2)) for i in range(3))
         self.reset()
+        self.window(mean, sd)
+
+    def window(self, mean, sd):
+        if self.capture_skip > 0:
+            self.capture_skip -= 1
+            return
+        if self.capture_left > 0:
+            self.capture_left -= 1
+            if sd < 1.0 and (self.capture_best is None or sd < self.capture_best[1]):
+                self.capture_best = (mean, sd)
+            if self.capture_left == 0 and self.capture_best is not None:
+                self.f.bias = tuple(self.capture_best[0])
+            return
+        diff = [mean[i] - self.f.bias[i] for i in range(3)]
+        if sd < self.VERY_STILL:
+            # glasses resting or head genuinely motionless: trust it even if the old estimate
+            # was far off (e.g. calibrated while the glasses were being put on)
+            self.f.bias = tuple(self.f.bias[i] + 0.5 * diff[i] for i in range(3))
+        elif sd < self.MAX_SD and all(abs(d) < self.MAX_DIFF for d in diff):
+            gain = (self.WINDOW / 1000.0) / self.TAU
+            self.f.bias = tuple(self.f.bias[i] + gain * diff[i] for i in range(3))
 
 
 class Driver:
@@ -146,6 +174,7 @@ class Driver:
         self.anchor = None
         self.following = False
         self.ref = None
+        self.still_time = 0.0
         self.ayaw = self.apitch = 0.0
         self.effect_on = False
         self.last_sent = None
@@ -351,6 +380,8 @@ class Driver:
             return q
         return fusion.qnorm(fusion.qmul(q, fusion.qaxis(tuple(c / wn for c in w), wn * la)))
 
+    CENTERING_RATE = 0.35   # 1/s: speed of gentle centering when the head is still
+
     def update_anchor(self, head, dt):
         """Anchored: the screen stays where it was at recenter.
         Follow: the screen's direction is tracked in the frame of the head pose captured at
@@ -381,8 +412,22 @@ class Driver:
             self.following = True
         elif off < 0.5:
             self.following = False
+        # head stillness (used for gentle centering)
+        w = self.omega
+        if math.sqrt(w[0] ** 2 + w[1] ** 2 + w[2] ** 2) < math.radians(4.0):
+            self.still_time += dt
+        else:
+            self.still_time = 0.0
         if self.following:
-            t = 1.0 - math.exp(-max(0.1, c["follow_speed"]) * dt)
+            rate = max(0.1, c["follow_speed"])
+        elif self.still_time > 1.0 and c["gentle_centering"]:
+            # slowly ease the screen back to where you're looking, which also cancels any
+            # residual gyro drift (equilibrium offset = drift rate / CENTERING_RATE)
+            rate = self.CENTERING_RATE
+        else:
+            rate = 0.0
+        if rate:
+            t = 1.0 - math.exp(-rate * dt)
             self.ayaw += dy * t
             self.apitch += dp * t
             self.anchor = fusion.qmul(self.ref, look_rotation(self.ayaw, self.apitch))
@@ -424,7 +469,8 @@ class Driver:
                     if self.dev:
                         self.drop_glasses()
                 self.state.update({"heartbeat": time.time(), "following": self.following,
-                                   "effect": self.effect_on})
+                                   "effect": self.effect_on,
+                                   "gyro_bias": [round(b, 3) for b in self.fusion.bias] if self.fusion else None})
                 write_state(self.state)
                 if not (active and self.dev and self.rs):
                     time.sleep(0.5)
