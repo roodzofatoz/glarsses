@@ -1,0 +1,19 @@
+{
+  "name": "glARsses",
+  "author": "roodzofatoz",
+  "flags": [
+    "root"
+  ],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "xreal",
+      "xr",
+      "ar",
+      "glasses",
+      "root"
+    ],
+    "description": "glARsses: free smooth follow, anchored and head-locked virtual screen for AR glasses, with size/distance, tilt, presets and per-game profiles.",
+    "image": ""
+  }
+}
