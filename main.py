@@ -149,7 +149,9 @@ INDEP_DEFAULTS = {
     "ambient_light": False,
     "ambient_intensity": 0.6,
     "ambient_size": 0.35,
+    "button_recenter": "off",
 }
+INDEP_BUTTON_CHOICES = ("off", "brightness_up", "brightness_down", "brightness_any", "top")
 INDEP_UNIT_TEXT = """[Unit]
 Description=glARsses glasses driver (glARsses Decky plugin)
 
@@ -494,6 +496,8 @@ class Plugin:
                 elif isinstance(default, (int, float)):
                     cfg[k] = float(v)
                 elif k == "mode" and v in INDEP_MODES:
+                    cfg[k] = v
+                elif k == "button_recenter" and v in INDEP_BUTTON_CHOICES:
                     cfg[k] = v
             except (TypeError, ValueError):
                 pass

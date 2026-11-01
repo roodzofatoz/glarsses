@@ -145,7 +145,10 @@ export interface IndepConfig {
   ambient_light: boolean;
   ambient_intensity: number;
   ambient_size: number;
+  button_recenter: ButtonRecenter;
 }
+
+export type ButtonRecenter = "off" | "brightness_up" | "brightness_down" | "brightness_any" | "top";
 
 export interface IndepStatus {
   running: boolean;

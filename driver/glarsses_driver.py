@@ -44,6 +44,7 @@ DEFAULTS = {
     "ambient_light": False,      # glow around the screen in the picture's edge colours
     "ambient_intensity": 0.6,    # 0..1
     "ambient_size": 0.35,        # glow reach, in screen heights
+    "button_recenter": "off",    # off | brightness_up | brightness_down | brightness_any | top
 }
 
 # XREAL Air 2 Pro sensor -> head frame (learned with head_test.py)
@@ -229,6 +230,8 @@ class Driver:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         self.effect_name = EFFECT
         self.xenv = None
+        self.buttons = None
+        self.last_button_recenter = 0.0
         self.install_shader()
 
     # ------------------------------------------------------------ setup
@@ -277,10 +280,31 @@ class Driver:
             self.recenter_seen = counter
         elif counter != self.recenter_seen:
             self.recenter_seen = counter
-            self.anchor = None
-            if self.bias:
-                self.bias.request_capture()
-            log("recenter")
+            self.recenter("panel")
+
+    def recenter(self, source):
+        self.anchor = None
+        if self.bias:
+            self.bias.request_capture()
+        log(f"recenter ({source})")
+
+    def check_buttons(self):
+        """Recenter when the button chosen in the panel is pressed on the glasses."""
+        if not self.buttons:
+            return
+        try:
+            presses = self.buttons.presses()
+        except OSError:
+            self.buttons = None
+            return
+        choice = self.config["button_recenter"]
+        if choice == "off" or not presses:
+            return
+        wanted = {"brightness_any": ("brightness_up", "brightness_down")}.get(choice, (choice,))
+        now = time.monotonic()
+        if any(p in wanted for p in presses) and now - self.last_button_recenter > 0.4:
+            self.last_button_recenter = now
+            self.recenter(f"{presses[-1].replace('_', ' ')} button")
 
     # ------------------------------------------------------ connections
     def connect_glasses(self):
@@ -298,6 +322,11 @@ class Driver:
         self.fusion = fusion.Fusion(fusion.AxisMap(tuple(axes["idx"]), tuple(axes["sign"])))
         self.bias = BiasTracker(self.fusion)
         log(f"glasses connected on {path}; calibrating (keep still)")
+        try:
+            self.buttons = imu.Buttons()
+        except OSError as e:
+            self.buttons = None
+            log(f"glasses buttons not available: {e}")
         samples = self.still_window()
         self.fusion.calibrate(samples)
         self.last_ts = samples[-1][0]
@@ -332,6 +361,12 @@ class Driver:
         return best
 
     def drop_glasses(self):
+        if self.buttons:
+            try:
+                self.buttons.close()
+            except OSError:
+                pass
+            self.buttons = None
         if self.dev:
             try:
                 self.dev.close()
@@ -561,6 +596,7 @@ class Driver:
                 log("glasses disconnected")
                 self.drop_glasses()
                 continue
+            self.check_buttons()
             for ts, gyro, accel in samples:
                 self.process_sample(ts, gyro, accel)
             head = self.head

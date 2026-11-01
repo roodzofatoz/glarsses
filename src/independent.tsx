@@ -2,6 +2,7 @@ import { toaster } from "@decky/api";
 import { ButtonItem, DropdownItem, Field, PanelSection, PanelSectionRow, SliderField, ToggleField } from "@decky/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ButtonRecenter,
   INDEP_MODE_LABELS,
   IndepConfig,
   IndepMode,
@@ -90,6 +91,25 @@ export function IndependentSections() {
           >
             Recenter display
           </ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <DropdownItem
+            label="Recenter with glasses button"
+            description={
+              cfg.button_recenter === "off"
+                ? "Press a button on the glasses to recenter."
+                : "The glasses still do the button's normal job (brightness or dimming) too."
+            }
+            rgOptions={[
+              { data: "off", label: "Off" },
+              { data: "brightness_up", label: "Brightness up" },
+              { data: "brightness_down", label: "Brightness down" },
+              { data: "brightness_any", label: "Either brightness button" },
+              { data: "top", label: "Top (dimming) button" },
+            ]}
+            selectedOption={cfg.button_recenter}
+            onChange={(o) => update({ button_recenter: o.data as ButtonRecenter }, true)}
+          />
         </PanelSectionRow>
       </PanelSection>
 

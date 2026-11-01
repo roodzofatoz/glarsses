@@ -100,3 +100,43 @@ class IMU:
             if r: return r
     def close(self):
         os.close(self.fd)
+
+
+# ---------------------------------------------------------------- buttons
+# The glasses' MCU interface (USB HID interface 4) reports button presses on its own:
+# packet 0xFD | crc32(4) | length(2) | timestamp(8) | msg id(2, LE) | reserved(5) | data...
+# msg 0x6C05 = button pressed, data[0..3] (LE) = which button.
+MSG_BUTTON_PRESSED = 0x6C05
+BUTTONS = {1: "top", 2: "brightness_up", 3: "brightness_down"}
+
+
+def parse_button(b):
+    """Return "top" / "brightness_up" / "brightness_down" for a button packet, else None."""
+    if len(b) < 26 or b[0] != 0xFD:
+        return None
+    if b[15] | (b[16] << 8) != MSG_BUTTON_PRESSED:
+        return None
+    return BUTTONS.get(int.from_bytes(b[22:26], "little"))
+
+
+class Buttons:
+    def __init__(self, path=None):
+        self.path = path or find_imu_hidraw(iface="input4")
+        if not self.path:
+            raise OSError("XREAL MCU hidraw device not found")
+        self.fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+
+    def presses(self):
+        """Button presses since the last call (non-blocking)."""
+        out = []
+        while True:
+            try:
+                b = os.read(self.fd, 64)
+            except BlockingIOError:
+                return out
+            name = parse_button(b)
+            if name:
+                out.append(name)
+
+    def close(self):
+        os.close(self.fd)
