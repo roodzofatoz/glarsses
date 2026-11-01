@@ -146,6 +146,7 @@ export interface IndepConfig {
   ambient_intensity: number;
   ambient_size: number;
   button_recenter: ButtonRecenter;
+  glow_intro: boolean;
 }
 
 export type ButtonRecenter = "off" | "brightness_up" | "brightness_down" | "brightness_any" | "top";

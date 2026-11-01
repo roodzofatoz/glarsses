@@ -150,6 +150,7 @@ INDEP_DEFAULTS = {
     "ambient_intensity": 0.6,
     "ambient_size": 0.35,
     "button_recenter": "off",
+    "glow_intro": True,
 }
 INDEP_BUTTON_CHOICES = ("off", "brightness_up", "brightness_down", "brightness_any", "top")
 INDEP_UNIT_TEXT = """[Unit]

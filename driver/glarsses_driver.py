@@ -45,7 +45,11 @@ DEFAULTS = {
     "ambient_intensity": 0.6,    # 0..1
     "ambient_size": 0.35,        # glow reach, in screen heights
     "button_recenter": "off",    # off | brightness_up | brightness_down | brightness_any | top
+    "glow_intro": True,          # flash the glow to full when the glARsses screen appears, then settle
+    "glow_intro_ms": 500,        # length of that animation
 }
+
+GLOW_MAX = (1.0, 1.0)            # (intensity, size) at the start of the intro animation
 
 # XREAL Air 2 Pro sensor -> head frame (learned with head_test.py)
 DEFAULT_AXES = {"idx": [0, 2, 1], "sign": [-1, 1, 1]}
@@ -232,6 +236,9 @@ class Driver:
         self.xenv = None
         self.buttons = None
         self.last_button_recenter = 0.0
+        self.intro_requested = None
+        self.intro_start = None
+        self.intro_sent_final = True
         self.install_shader()
 
     # ------------------------------------------------------------ setup
@@ -413,10 +420,15 @@ class Driver:
                 self.install_shader()
                 # don't block: gamescope compiles the effect on its next frame and keeps
                 # uniforms we send after set_effect
+                self.rs.ready_effect = None
                 self.rs.set_effect(self.effect_name, wait=False)
                 self.rs.enable()
                 self.effect_on = True
                 self.last_sent = None
+                # intro animation: wait until gamescope reports the effect compiled, then play
+                self.intro_requested = time.monotonic() if self.config["glow_intro"] else None
+                self.intro_start = None
+                self.intro_sent_final = self.intro_requested is None
                 self.push_static_uniforms()
             else:
                 self.rs.set_floats("xri_screen", [1.0, 0.0])
@@ -425,6 +437,45 @@ class Driver:
         except (OSError, RuntimeError) as e:
             log(f"gamescope error: {e}")
             self.drop_gamescope()
+
+    def ambient_target(self):
+        c = self.config
+        size = max(0.05, min(1.5, float(c["ambient_size"])))
+        if not c["ambient_light"]:
+            return 0.0, size
+        return max(0.0, min(1.0, float(c["ambient_intensity"]))), size
+
+    def ambient_now(self):
+        """Glow (intensity, size) to show right now, including the intro animation:
+        full glow when the screen appears, easing out to the user's setting (or to off)."""
+        target = self.ambient_target()
+        if self.intro_requested is not None:
+            return GLOW_MAX  # waiting for gamescope to compile the effect: hold at full glow
+        if self.intro_start is None:
+            return target
+        p = (time.monotonic() - self.intro_start) / max(0.05, self.config["glow_intro_ms"] / 1000.0)
+        if p >= 1.0:
+            self.intro_start = None
+            return target
+        e = 1.0 - (1.0 - p) ** 3  # ease-out cubic
+        if not self.config["ambient_light"]:
+            return (GLOW_MAX[0] * (1.0 - e), GLOW_MAX[1])  # fade out at full size
+        return tuple(m + (t - m) * e for m, t in zip(GLOW_MAX, target))
+
+    def animate_intro(self, now):
+        """Called every frame: starts the intro once the effect is ready and drives it."""
+        if self.intro_requested is not None:
+            self.rs.pump()
+            ready = self.rs.ready_effect == self.effect_name
+            if ready or now - self.intro_requested > 1.0:   # fallback if no ready event
+                self.intro_requested = None
+                self.intro_start = time.monotonic()
+        if self.intro_requested is None and self.intro_start is None and self.intro_sent_final:
+            return  # no animation running
+        values = self.ambient_now()
+        self.rs.set_floats("xri_ambient", list(values))
+        # one more send after the animation ends so the final value is exact
+        self.intro_sent_final = self.intro_start is None and self.intro_requested is None
 
     def push_static_uniforms(self):
         if not self.rs or not self.effect_on:
@@ -436,8 +487,7 @@ class Driver:
             self.rs.set_floats("xri_fov", [th, tv])
             self.rs.set_floats("xri_output", [float(c["output_aspect"]), 1.0 if c["curved"] else 0.0])
             self.rs.set_floats("xri_debug", [1.0 if c["debug_outline"] else 0.0])
-            amb = max(0.0, min(1.0, float(c["ambient_intensity"]))) if c["ambient_light"] else 0.0
-            self.rs.set_floats("xri_ambient", [amb, max(0.05, min(1.5, float(c["ambient_size"])))])
+            self.rs.set_floats("xri_ambient", list(self.ambient_now()))
             self.rs.set_floats("xri_screen", [scale, 1.0])
         except OSError as e:
             log(f"gamescope error: {e}")
@@ -613,6 +663,8 @@ class Driver:
                     p = self.predicted(head)
                     self.update_anchor(p, dt)
                     self.send_pose(p)
+                    if self.rs and self.effect_on:
+                        self.animate_intro(now)
                 except (OSError, RuntimeError) as e:
                     log(f"gamescope error: {e}")
                     self.drop_gamescope()

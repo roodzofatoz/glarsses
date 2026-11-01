@@ -44,6 +44,7 @@ class Reshade:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(self.path)
         self.next_id = 2
+        self.ready_effect = None
         self.buf = b""
         self.registry = self._new_id()
         self._send(WL_DISPLAY, 1, struct.pack("<I", self.registry))  # get_registry
@@ -125,8 +126,11 @@ class Reshade:
         self._send(self.obj, 3, _str(key) + _arr(struct.pack(f"<{len(values)}f", *values)))
 
     def pump(self):
-        """Drain pending events so the socket buffer never fills."""
-        self._read_events(block=False)
+        """Drain pending events so the socket buffer never fills. Records effect_ready."""
+        for obj, op, body in self._read_events(block=False):
+            if obj == self.obj and op == 0:
+                n = struct.unpack_from("<I", body)[0]
+                self.ready_effect = body[4:4 + n - 1].decode(errors="replace")
 
     def close(self):
         try:

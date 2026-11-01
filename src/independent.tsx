@@ -226,6 +226,14 @@ export function IndependentSections() {
               onChange={(v) => update({ ambient_light: v }, true)}
             />
           </PanelSectionRow>
+          <PanelSectionRow>
+            <ToggleField
+              label="Glow intro animation"
+              description="When the glARsses screen appears, the glow flashes to full and settles to your setting (or fades out if Ambient light is off) in 0.5 s."
+              checked={cfg.glow_intro}
+              onChange={(v) => update({ glow_intro: v }, true)}
+            />
+          </PanelSectionRow>
           {cfg.ambient_light && (
             <>
               <PanelSectionRow>
