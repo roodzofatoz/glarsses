@@ -6,6 +6,7 @@ A [Decky Loader](https://decky.xyz) plugin for Steam Deck that turns AR glasses 
 - **Anchored:** the screen stays fixed in place in the room.
 - **Head-locked:** the screen moves rigidly with your head.
 - Display **size** and **distance**, **curved** screen, and **tilt correction**.
+- **Ambient light:** an optional glow around the screen, coloured by the picture (Ambilight-style).
 - **Recenter**, which also re-measures the gyro offset to stop drift.
 - **Presets** and automatic **per-game profiles**.
 - Optional support for the XR Gaming plugin's driver, if you have it installed.

@@ -146,6 +146,9 @@ INDEP_DEFAULTS = {
     "debug_outline": False,
     "roll_trim_deg": 0.0,
     "gentle_centering": True,
+    "ambient_light": False,
+    "ambient_intensity": 0.6,
+    "ambient_size": 0.35,
 }
 INDEP_UNIT_TEXT = """[Unit]
 Description=glARsses glasses driver (glARsses Decky plugin)

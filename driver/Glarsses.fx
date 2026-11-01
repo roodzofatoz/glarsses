@@ -22,6 +22,28 @@ uniform float2 xri_screen < source = "xri_screen"; defaultValue = float2(1.0, 0.
 uniform float2 xri_output < source = "xri_output"; defaultValue = float2(1.7778, 0.0); >;
 // 1 = draw an outline around the virtual screen (setup / debugging)
 uniform float xri_debug < source = "xri_debug"; defaultValue = 0.0; >;
+// ambient light around the screen: x = intensity (0 = off), y = size (in screen heights)
+uniform float2 xri_ambient < source = "xri_ambient"; defaultValue = float2(0.0, 0.35); >;
+
+// Soft glow outside the screen, coloured by the part of the picture nearest to this point
+// (like an Ambilight TV). On see-through glasses black stays transparent, so the glow is
+// the only light added around the screen.
+float4 Ambient(float2 suv, float screen_aspect)
+{
+    float2 edge = saturate(suv);
+    float dist = length((suv - edge) * float2(screen_aspect, 1.0));
+    float fall = saturate(1.0 - dist / max(xri_ambient.y, 0.01));
+    fall *= fall;
+    if (fall <= 0.0)
+        return float4(0.0, 0.0, 0.0, 1.0);
+    // blurred colour of the screen area next to this point (3x3 taps)
+    float2 c = clamp(suv, 0.08, 0.92);
+    float3 col = 0.0;
+    [unroll] for (int i = -1; i <= 1; i++)
+        [unroll] for (int j = -1; j <= 1; j++)
+            col += tex2D(XRI_BackBuffer, c + float2(i, j) * 0.06).rgb;
+    return float4(col / 9.0 * xri_ambient.x * fall, 1.0);
+}
 
 float3 qrot(float4 q, float3 v)
 {
@@ -63,7 +85,11 @@ float4 PS_Glarsses(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 
     float2 suv = float2(0.5 + p.x / (2.0 * half_extent.x), 0.5 - p.y / (2.0 * half_extent.y));
     if (any(suv < 0.0) || any(suv > 1.0))
+    {
+        if (xri_ambient.x > 0.0)
+            return Ambient(suv, half_extent.x / half_extent.y);
         return float4(0.0, 0.0, 0.0, 1.0);
+    }
     if (xri_debug > 0.5 && (any(suv < 0.004) || any(suv > 0.996)))
         return float4(1.0, 1.0, 0.0, 1.0);
     return tex2D(XRI_BackBuffer, suv);

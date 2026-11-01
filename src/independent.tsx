@@ -199,6 +199,41 @@ export function IndependentSections() {
             />
           </PanelSectionRow>
           <PanelSectionRow>
+            <ToggleField
+              label="Ambient light"
+              description="Soft glow around the screen in the colours of the picture's edges."
+              checked={cfg.ambient_light}
+              onChange={(v) => update({ ambient_light: v }, true)}
+            />
+          </PanelSectionRow>
+          {cfg.ambient_light && (
+            <>
+              <PanelSectionRow>
+                <SliderField
+                  label="Glow intensity"
+                  value={cfg.ambient_intensity}
+                  min={0.1}
+                  max={1}
+                  step={0.05}
+                  showValue
+                  onChange={(v) => update({ ambient_intensity: v })}
+                />
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <SliderField
+                  label="Glow size"
+                  description="How far the glow reaches, in screen heights."
+                  value={cfg.ambient_size}
+                  min={0.1}
+                  max={1.0}
+                  step={0.05}
+                  showValue
+                  onChange={(v) => update({ ambient_size: v })}
+                />
+              </PanelSectionRow>
+            </>
+          )}
+          <PanelSectionRow>
             <ToggleField label="Show advanced options" checked={showAdvanced} onChange={setShowAdvanced} />
           </PanelSectionRow>
           {showAdvanced && (

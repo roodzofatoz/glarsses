@@ -142,6 +142,9 @@ export interface IndepConfig {
   debug_outline: boolean;
   roll_trim_deg: number;
   gentle_centering: boolean;
+  ambient_light: boolean;
+  ambient_intensity: number;
+  ambient_size: number;
 }
 
 export interface IndepStatus {

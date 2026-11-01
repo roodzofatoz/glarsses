@@ -41,6 +41,9 @@ DEFAULTS = {
     "debug_outline": False,
     "roll_trim_deg": 0.0,        # + rotates the screen clockwise
     "gentle_centering": True,    # follow mode: ease the screen back to center when the head is still
+    "ambient_light": False,      # glow around the screen in the picture's edge colours
+    "ambient_intensity": 0.6,    # 0..1
+    "ambient_size": 0.35,        # glow reach, in screen heights
 }
 
 # XREAL Air 2 Pro sensor -> head frame (learned with head_test.py)
@@ -346,6 +349,8 @@ class Driver:
             self.rs.set_floats("xri_fov", [th, tv])
             self.rs.set_floats("xri_output", [float(c["output_aspect"]), 1.0 if c["curved"] else 0.0])
             self.rs.set_floats("xri_debug", [1.0 if c["debug_outline"] else 0.0])
+            amb = max(0.0, min(1.0, float(c["ambient_intensity"]))) if c["ambient_light"] else 0.0
+            self.rs.set_floats("xri_ambient", [amb, max(0.05, min(1.5, float(c["ambient_size"])))])
             self.rs.set_floats("xri_screen", [scale, 1.0])
         except OSError as e:
             log(f"gamescope error: {e}")

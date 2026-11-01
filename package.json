@@ -1,6 +1,6 @@
 {
   "name": "decky-glarsses",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Smooth follow, anchoring, size/distance and comfort controls for AR glasses",
   "type": "module",
   "scripts": {
