@@ -49,7 +49,7 @@ uninstall() {
   rm -f "$HOME/.config/systemd/user/glarsses.service" "$HOME/.config/systemd/user/xr-independent.service"
   user_systemctl daemon-reload
   rm -rf "$HOME/.local/share/glarsses" "$HOME/.local/share/xr-independent"
-  rm -f "$HOME/.local/share/gamescope/reshade/Shaders/Glarsses.fx" \
+  rm -f "$HOME/.local/share/gamescope/reshade/Shaders/"Glarsses*.fx \
         "$HOME/.local/share/gamescope/reshade/Shaders/XRIndependent.fx"
   if [ "$PURGE" -eq 1 ]; then
     say "Removing settings"

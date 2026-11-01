@@ -10,7 +10,7 @@ Files:
   ~/.config/glarsses/control.json  one-shot commands, e.g. {"recenter": <counter>}
   $XDG_RUNTIME_DIR/glarsses-state.json   live state for the plugin
 """
-import json, math, os, shutil, sys, time
+import hashlib, json, math, os, shutil, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -188,16 +188,27 @@ class Driver:
         self.head = None
         self.state = {"glasses": False, "gamescope": False, "mode": self.config["mode"]}
         os.makedirs(CONFIG_DIR, exist_ok=True)
+        self.effect_name = EFFECT
         self.install_shader()
 
     # ------------------------------------------------------------ setup
     def install_shader(self):
+        """Install the effect under a name that includes a hash of its contents. gamescope
+        compiles each effect file name only once per session, so a new name guarantees an
+        updated effect is actually used. Older copies are removed."""
         os.makedirs(SHADERS, exist_ok=True)
-        src = os.path.join(HERE, EFFECT)
-        dst = os.path.join(SHADERS, EFFECT)
         try:
-            if not os.path.exists(dst) or open(src, "rb").read() != open(dst, "rb").read():
-                shutil.copy(src, dst)
+            data = open(os.path.join(HERE, EFFECT), "rb").read()
+            name = "Glarsses-%s.fx" % hashlib.sha256(data).hexdigest()[:10]
+            dst = os.path.join(SHADERS, name)
+            if not os.path.exists(dst) or open(dst, "rb").read() != data:
+                with open(dst + ".tmp", "wb") as f:
+                    f.write(data)
+                os.replace(dst + ".tmp", dst)
+            for old in os.listdir(SHADERS):
+                if old.startswith("Glarsses") and old.endswith(".fx") and old != name:
+                    os.remove(os.path.join(SHADERS, old))
+            self.effect_name = name
         except OSError as e:
             log(f"could not install shader: {e}")
 
@@ -326,7 +337,7 @@ class Driver:
                 self.install_shader()
                 # don't block: gamescope compiles the effect on its next frame and keeps
                 # uniforms we send after set_effect
-                self.rs.set_effect(EFFECT, wait=False)
+                self.rs.set_effect(self.effect_name, wait=False)
                 self.rs.enable()
                 self.effect_on = True
                 self.last_sent = None
