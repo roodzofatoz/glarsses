@@ -236,29 +236,34 @@ class Driver:
         self.xenv = None
         self.buttons = None
         self.last_button_recenter = 0.0
-        self.intro_requested = None
-        self.intro_start = None
-        self.intro_sent_final = True
+        self.intro_disarm_at = None
+        self.intro_anim_end = 0.0
+        self.effect_slot = 0
+        self.effect_names = (EFFECT, EFFECT)
         self.install_shader()
 
     # ------------------------------------------------------------ setup
     def install_shader(self):
-        """Install the effect under a name that includes a hash of its contents. gamescope
-        compiles each effect file name only once per session, so a new name guarantees an
-        updated effect is actually used. Older copies are removed."""
+        """Install the effect as two identical copies whose names include a hash of the
+        contents. gamescope compiles each file name once per session, so a new hash guarantees
+        an update is used, and alternating between the copies makes gamescope load the effect
+        fresh each time the screen appears (restarting its timer for the intro animation).
+        Older copies are removed."""
         os.makedirs(SHADERS, exist_ok=True)
         try:
             data = open(os.path.join(HERE, EFFECT), "rb").read()
-            name = "Glarsses-%s.fx" % hashlib.sha256(data).hexdigest()[:10]
-            dst = os.path.join(SHADERS, name)
-            if not os.path.exists(dst) or open(dst, "rb").read() != data:
-                with open(dst + ".tmp", "wb") as f:
-                    f.write(data)
-                os.replace(dst + ".tmp", dst)
+            h = hashlib.sha256(data).hexdigest()[:10]
+            names = (f"Glarsses-{h}-a.fx", f"Glarsses-{h}-b.fx")
+            for name in names:
+                dst = os.path.join(SHADERS, name)
+                if not os.path.exists(dst) or open(dst, "rb").read() != data:
+                    with open(dst + ".tmp", "wb") as f:
+                        f.write(data)
+                    os.replace(dst + ".tmp", dst)
             for old in os.listdir(SHADERS):
-                if old.startswith("Glarsses") and old.endswith(".fx") and old != name:
+                if old.startswith("Glarsses") and old.endswith(".fx") and old not in names:
                     os.remove(os.path.join(SHADERS, old))
-            self.effect_name = name
+            self.effect_names = names
         except OSError as e:
             log(f"could not install shader: {e}")
 
@@ -420,15 +425,19 @@ class Driver:
                 self.install_shader()
                 # don't block: gamescope compiles the effect on its next frame and keeps
                 # uniforms we send after set_effect
+                # alternate between two identical copies so gamescope loads the effect fresh:
+                # its "timer" then starts at 0 exactly when the screen appears, which times the
+                # intro animation inside the shader
+                self.effect_slot ^= 1
+                self.effect_name = self.effect_names[self.effect_slot]
                 self.rs.ready_effect = None
                 self.rs.set_effect(self.effect_name, wait=False)
                 self.rs.enable()
                 self.effect_on = True
                 self.last_sent = None
-                # intro animation: wait until gamescope reports the effect compiled, then play
-                self.intro_requested = time.monotonic() if self.config["glow_intro"] else None
-                self.intro_start = None
-                self.intro_sent_final = self.intro_requested is None
+                intro_s = self.config["glow_intro_ms"] / 1000.0
+                self.intro_anim_end = time.monotonic() + intro_s + 0.2
+                self.intro_disarm_at = time.monotonic() + intro_s + 1.0 if self.config["glow_intro"] else None
                 self.push_static_uniforms()
             else:
                 self.rs.set_floats("xri_screen", [1.0, 0.0])
@@ -445,37 +454,16 @@ class Driver:
             return 0.0, size
         return max(0.0, min(1.0, float(c["ambient_intensity"]))), size
 
-    def ambient_now(self):
-        """Glow (intensity, size) to show right now, including the intro animation:
-        full glow when the screen appears, easing out to the user's setting (or to off)."""
-        target = self.ambient_target()
-        if self.intro_requested is not None:
-            return GLOW_MAX  # waiting for gamescope to compile the effect: hold at full glow
-        if self.intro_start is None:
-            return target
-        p = (time.monotonic() - self.intro_start) / max(0.05, self.config["glow_intro_ms"] / 1000.0)
-        if p >= 1.0:
-            self.intro_start = None
-            return target
-        e = 1.0 - (1.0 - p) ** 3  # ease-out cubic
-        if not self.config["ambient_light"]:
-            return (GLOW_MAX[0] * (1.0 - e), GLOW_MAX[1])  # fade out at full size
-        return tuple(m + (t - m) * e for m, t in zip(GLOW_MAX, target))
+    # cubic-bezier timing curves for the intro (CSS notation)
+    BEZIER_SETTLE = (0.34, 1.56, 0.64, 1.0)   # sweeps past the setting, then springs back
+    BEZIER_FADE = (0.16, 1.0, 0.3, 1.0)       # smooth fade to off (can't overshoot below 0)
 
-    def animate_intro(self, now):
-        """Called every frame: starts the intro once the effect is ready and drives it."""
-        if self.intro_requested is not None:
-            self.rs.pump()
-            ready = self.rs.ready_effect == self.effect_name
-            if ready or now - self.intro_requested > 1.0:   # fallback if no ready event
-                self.intro_requested = None
-                self.intro_start = time.monotonic()
-        if self.intro_requested is None and self.intro_start is None and self.intro_sent_final:
-            return  # no animation running
-        values = self.ambient_now()
-        self.rs.set_floats("xri_ambient", list(values))
-        # one more send after the animation ends so the final value is exact
-        self.intro_sent_final = self.intro_start is None and self.intro_requested is None
+    def push_intro(self, armed):
+        c = self.config
+        ms = float(c["glow_intro_ms"]) if c["glow_intro"] else 0.0
+        curve = self.BEZIER_SETTLE if c["ambient_light"] else self.BEZIER_FADE
+        self.rs.set_floats("xri_bezier", list(curve))
+        self.rs.set_floats("xri_intro", [ms, 1.0 if armed else 0.0])
 
     def push_static_uniforms(self):
         if not self.rs or not self.effect_on:
@@ -487,7 +475,8 @@ class Driver:
             self.rs.set_floats("xri_fov", [th, tv])
             self.rs.set_floats("xri_output", [float(c["output_aspect"]), 1.0 if c["curved"] else 0.0])
             self.rs.set_floats("xri_debug", [1.0 if c["debug_outline"] else 0.0])
-            self.rs.set_floats("xri_ambient", list(self.ambient_now()))
+            self.rs.set_floats("xri_ambient", list(self.ambient_target()))
+            self.push_intro(armed=self.intro_disarm_at is not None)
             self.rs.set_floats("xri_screen", [scale, 1.0])
         except OSError as e:
             log(f"gamescope error: {e}")
@@ -663,8 +652,16 @@ class Driver:
                     p = self.predicted(head)
                     self.update_anchor(p, dt)
                     self.send_pose(p)
-                    if self.rs and self.effect_on:
-                        self.animate_intro(now)
+                    if self.intro_disarm_at is not None and now < self.intro_anim_end:
+                        # gamescope only redraws when something changes; ask for a redraw every
+                        # frame while the intro plays so it animates even on a static screen
+                        # (the values themselves come from gamescope's clock in the shader)
+                        self.push_intro(armed=True)
+                    if self.intro_disarm_at is not None and now >= self.intro_disarm_at:
+                        # past the intro: if gamescope reloads the effect later (e.g. a game
+                        # changes resolution) the animation must not replay
+                        self.intro_disarm_at = None
+                        self.push_intro(armed=False)
                 except (OSError, RuntimeError) as e:
                     log(f"gamescope error: {e}")
                     self.drop_gamescope()

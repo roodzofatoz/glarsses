@@ -24,6 +24,40 @@ uniform float2 xri_output < source = "xri_output"; defaultValue = float2(1.7778,
 uniform float xri_debug < source = "xri_debug"; defaultValue = 0.0; >;
 // ambient light around the screen: x = intensity (0 = off), y = size (in screen heights)
 uniform float2 xri_ambient < source = "xri_ambient"; defaultValue = float2(0.0, 0.35); >;
+// intro animation, timed by gamescope's own clock so it is smooth on every frame:
+// x = duration in ms (0 = no animation), y = armed (1 while the screen has just appeared)
+uniform float2 xri_intro < source = "xri_intro"; defaultValue = float2(0.0, 0.0); >;
+// cubic-bezier(x1, y1, x2, y2) timing curve for the intro, as in CSS animations
+uniform float4 xri_bezier < source = "xri_bezier"; defaultValue = float4(0.34, 1.56, 0.64, 1.0); >;
+// milliseconds since gamescope loaded this effect (the driver loads it fresh each time
+// the glARsses screen appears, so 0 = the moment it appeared)
+uniform float xri_timer < source = "timer"; >;
+
+// y of a cubic Bezier timing curve at progress x (Newton iterations solve x(t) = x)
+float CubicBezier(float x, float4 c)
+{
+    float t = x;
+    [unroll] for (int i = 0; i < 6; i++)
+    {
+        float u = 1.0 - t;
+        float bx = 3.0 * u * u * t * c.x + 3.0 * u * t * t * c.z + t * t * t;
+        float dx = 3.0 * u * u * c.x + 6.0 * u * t * (c.z - c.x) + 3.0 * t * t * (1.0 - c.z);
+        t = saturate(t - (bx - x) / max(dx, 1e-4));
+    }
+    float u = 1.0 - t;
+    return 3.0 * u * u * t * c.y + 3.0 * u * t * t * c.w + t * t * t;
+}
+
+// glow (intensity, size) for this frame: full glow when the screen appears, then along the
+// Bezier curve to the user's setting
+float2 AmbientNow()
+{
+    if (xri_intro.x <= 0.0 || xri_intro.y < 0.5)
+        return xri_ambient;
+    float e = CubicBezier(saturate(xri_timer / xri_intro.x), xri_bezier);
+    float2 v = lerp(float2(1.0, 1.0), xri_ambient, e);
+    return float2(saturate(v.x), max(v.y, 0.05));
+}
 
 // Soft glow outside the screen (like an Ambilight TV). The picture is first shrunk to a tiny
 // 32x18 image (each texel averages 64 samples) and blurred again, so the glow only carries
@@ -57,10 +91,10 @@ float4 PS_GlowBlur(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     return float4(c / 256.0, 1.0);
 }
 
-float4 Ambient(float2 suv, float screen_aspect, float2 pos)
+float4 Ambient(float2 suv, float screen_aspect, float2 pos, float2 amb)
 {
     float2 edge = saturate(suv);
-    float t = saturate(length((suv - edge) * float2(screen_aspect, 1.0)) / max(xri_ambient.y, 0.01));
+    float t = saturate(length((suv - edge) * float2(screen_aspect, 1.0)) / max(amb.y, 0.01));
     float fall = 1.0 - t;
     fall = fall * fall * (3.0 - 2.0 * fall);      // smooth start and end, no visible ring
     if (fall <= 0.0)
@@ -72,7 +106,7 @@ float4 Ambient(float2 suv, float screen_aspect, float2 pos)
         [unroll] for (int y = 0; y < 3; y++)
             overall += tex2D(XRI_Glow, float2(0.2 + 0.3 * x, 0.2 + 0.3 * y)).rgb;
     overall /= 9.0;
-    float3 col = lerp(local, overall, 0.7 * t) * xri_ambient.x * fall;
+    float3 col = lerp(local, overall, 0.7 * t) * amb.x * fall;
     // tiny dither so the dark end of the gradient doesn't band
     col += (frac(sin(dot(pos, float2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
     return float4(max(col, 0.0), 1.0);
@@ -119,8 +153,9 @@ float4 PS_Glarsses(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     float2 suv = float2(0.5 + p.x / (2.0 * half_extent.x), 0.5 - p.y / (2.0 * half_extent.y));
     if (any(suv < 0.0) || any(suv > 1.0))
     {
-        if (xri_ambient.x > 0.0)
-            return Ambient(suv, half_extent.x / half_extent.y, pos.xy);
+        float2 amb = AmbientNow();
+        if (amb.x > 0.0)
+            return Ambient(suv, half_extent.x / half_extent.y, pos.xy, amb);
         return float4(0.0, 0.0, 0.0, 1.0);
     }
     if (xri_debug > 0.5 && (any(suv < 0.004) || any(suv > 0.996)))
