@@ -10,7 +10,7 @@ Files:
   ~/.config/glarsses/control.json  one-shot commands, e.g. {"recenter": <counter>}
   $XDG_RUNTIME_DIR/glarsses-state.json   live state for the plugin
 """
-import hashlib, json, math, os, shutil, sys, time
+import hashlib, json, math, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -76,6 +76,45 @@ def fov_tangents(diag_deg, aspect):
     t = math.tan(math.radians(diag_deg) / 2)
     d = math.hypot(aspect, 1.0)
     return t * aspect / d, t / d
+
+
+def gamescope_x_env(socket_path):
+    """DISPLAY/XAUTHORITY of the gamescope session at socket_path, borrowed from a process
+    running inside it (Steam or the game carry GAMESCOPE_WAYLAND_DISPLAY plus both values)."""
+    want = os.path.basename(socket_path or "")
+    me = os.getuid()
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            if os.stat(f"/proc/{pid}").st_uid != me:
+                continue
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                env = dict(kv.split("=", 1) for kv in f.read().decode(errors="replace").split("\0") if "=" in kv)
+        except OSError:
+            continue
+        if env.get("GAMESCOPE_WAYLAND_DISPLAY") == want and env.get("DISPLAY"):
+            return {"DISPLAY": env["DISPLAY"], "XAUTHORITY": env.get("XAUTHORITY", "")}
+    return None
+
+
+def active_effect(xenv):
+    """The effect gamescope is currently using (GAMESCOPE_RESHADE_EFFECT on its X root window):
+    a file name, "" if none is set, or None if it can't be determined."""
+    if not xenv:
+        return None
+    env = dict(os.environ, DISPLAY=xenv["DISPLAY"])
+    if xenv.get("XAUTHORITY"):
+        env["XAUTHORITY"] = xenv["XAUTHORITY"]
+    try:
+        out = subprocess.run(["xprop", "-root", "GAMESCOPE_RESHADE_EFFECT"], env=env,
+                             capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    m = re.search(r'=\s*"(.*)"', out.stdout)
+    return m.group(1) if m else ""
 
 
 def look_rotation(yaw, pitch, roll=0.0):
@@ -189,6 +228,7 @@ class Driver:
         self.state = {"glasses": False, "gamescope": False, "mode": self.config["mode"]}
         os.makedirs(CONFIG_DIR, exist_ok=True)
         self.effect_name = EFFECT
+        self.xenv = None
         self.install_shader()
 
     # ------------------------------------------------------------ setup
@@ -310,6 +350,7 @@ class Driver:
         try:
             self.rs = wl_reshade.Reshade(sock)
             self.effect_on = False
+            self.xenv = None
             log(f"connected to gamescope at {sock}")
         except (OSError, RuntimeError) as e:
             log(f"gamescope connect failed: {e}")
@@ -468,6 +509,7 @@ class Driver:
         log("glARsses driver started")
         next_frame = 0.0
         next_housekeeping = 0.0
+        next_effect_check = 0.0
         last_frame_time = time.monotonic()
         while True:
             now = time.monotonic()
@@ -494,8 +536,25 @@ class Driver:
                 self.set_effect_enabled(True)
                 if not self.rs:
                     continue  # gamescope went away while enabling; retry on next housekeeping
+                if now >= next_effect_check:
+                    # gamescope uses whatever GAMESCOPE_RESHADE_EFFECT says. Turning the effect on
+                    # while a session is still starting, or Steam resetting it, can silently drop
+                    # ours, so check it regularly and re-apply it if it's missing.
+                    next_effect_check = now + 2.0
+                    if not self.xenv:
+                        self.xenv = gamescope_x_env(self.rs.path)
+                    current = active_effect(self.xenv)
+                    if current is not None and current != self.effect_name:
+                        log(f"effect not active in gamescope ({current or 'none'}); re-applying")
+                        self.effect_on = False
+                        self.set_effect_enabled(True)
+                        if not self.rs:
+                            continue
 
             time.sleep(0.004)  # the kernel queues samples; batching keeps wakeups (and CPU) low
+            if not self.dev:
+                next_housekeeping = 0.0
+                continue
             try:
                 samples = self.dev.read_available()
             except OSError:
