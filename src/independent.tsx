@@ -205,6 +205,20 @@ export function IndependentSections() {
               />
             </PanelSectionRow>
           )}
+          {cfg.mode !== "head_locked" && (
+            <PanelSectionRow>
+              <ToggleField
+                label="Allow display tilt"
+                description={
+                  cfg.allow_tilt
+                    ? "The screen stays level with the room, so it looks tilted when you tilt your head."
+                    : "The screen ignores head tilt and always stays straight in front of your eyes."
+                }
+                checked={cfg.allow_tilt}
+                onChange={(v) => update({ allow_tilt: v }, true)}
+              />
+            </PanelSectionRow>
+          )}
           <PanelSectionRow>
             <SliderField
               label="Tilt correction (degrees)"

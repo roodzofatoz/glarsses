@@ -47,6 +47,7 @@ DEFAULTS = {
     "button_recenter": "off",    # off | brightness_up | brightness_down | brightness_any | top
     "glow_intro": True,          # flash the glow to full when the glARsses screen appears, then settle
     "glow_intro_ms": 500,        # length of that animation
+    "allow_tilt": True,          # False: ignore head tilt so the screen stays straight to the eyes
 }
 
 GLOW_MAX = (1.0, 1.0)            # (intensity, size) at the start of the intro animation
@@ -120,6 +121,13 @@ def active_effect(xenv):
         return None
     m = re.search(r'=\s*"(.*)"', out.stdout)
     return m.group(1) if m else ""
+
+
+def without_tilt(q):
+    """Remove the visible tilt (roll of the horizon) from the head->screen rotation q, keeping
+    turning and looking up/down exactly as they are (q = yaw * pitch * roll -> yaw * pitch)."""
+    roll = math.radians(fusion.yaw_pitch_roll(q)[2])
+    return fusion.qnorm(fusion.qmul(q, fusion.qaxis((0, 0, 1), -roll)))
 
 
 def look_rotation(yaw, pitch, roll=0.0):
@@ -570,8 +578,12 @@ class Driver:
         trim = fusion.qaxis((0, 0, 1), -math.radians(float(self.config["roll_trim_deg"])))
         if mode == "head_locked":
             rel = fusion.qconj(trim)
-        else:
+        elif self.config["allow_tilt"]:
             rel = fusion.qmul(fusion.qconj(fusion.qmul(self.anchor, trim)), head)
+        else:
+            # ignore head tilt so the screen always stays straight in front of the eyes
+            rel = without_tilt(fusion.qmul(fusion.qconj(self.anchor), head))
+            rel = fusion.qmul(fusion.qconj(trim), rel)
         if self.last_sent is not None and angle_between(rel, self.last_sent) < 0.01:
             return
         self.rs.set_floats("xri_pose", list(rel))
